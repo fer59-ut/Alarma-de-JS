@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reloj CDMX con alarma</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --ok: #22c55e;
+      --alert: #ef4444;
+      --btn: #2563eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: Arial, Helvetica, sans-serif;
+      background: radial-gradient(circle at top, #1e293b, var(--bg));
+      color: var(--text);
+      padding: 24px;
+    }
+
+    .app {
+      width: min(520px, 100%);
+      background: rgba(30, 41, 59, 0.96);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      text-align: center;
+      font-size: 1.55rem;
+    }
+
+    .timezone {
+      margin: 0 0 16px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .clock {
+      font-size: clamp(2rem, 8vw, 3.3rem);
+      text-align: center;
+      font-weight: 700;
+      letter-spacing: 1px;
+      margin: 10px 0 2px;
+      color: var(--ok);
+      transition: color 0.2s ease;
+    }
+
+    .date {
+      text-align: center;
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .clock.alarm {
+      color: var(--alert);
+      animation: pulse 0.85s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.04); }
+    }
+
+    .status {
+      text-align: center;
+      color: var(--muted);
+      margin: 0 0 12px;
+      min-height: 22px;
+    }
+
+    .countdown {
+      margin: 0 0 16px;
+      text-align: center;
+      font-weight: 700;
+      min-height: 22px;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr) auto;
+      gap: 10px;
+    }
+
+    input, button {
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      font-size: 1rem;
+      padding: 10px 12px;
+    }
+
+    input {
+      background: #0b1220;
+      color: var(--text);
+      text-align: center;
+    }
+
+    button {
+      background: var(--btn);
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      white-space: nowrap;
+    }
+
+    .secondary {
+      margin-top: 10px;
+      width: 100%;
+      background: #334155;
+    }
+
+    @media (max-width: 540px) {
+      .controls { grid-template-columns: 1fr 1fr; }
+      .controls button { grid-column: span 2; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <h1>Reloj en tiempo real + alarma</h1>
+    <p class="timezone">Horario fijo: Ciudad de México (CDMX)</p>
+
+    <div id="clock" class="clock">00:00:00</div>
+    <p id="dateText" class="date">--</p>
+
+    <p id="status" class="status">Sin alarma configurada.</p>
+    <p id="countdown" class="countdown"></p>
+
+    <div class="controls">
+      <input id="hoursInput" type="number" min="0" max="23" placeholder="Horas" aria-label="Horas" />
+      <input id="minutesInput" type="number" min="0" max="59" placeholder="Min" aria-label="Minutos" />
+      <input id="secondsInput" type="number" min="0" max="59" placeholder="Seg" aria-label="Segundos" />
+      <button id="setAlarmBtn">Activar</button>
+    </div>
+
+    <button id="stopAlarmBtn" class="secondary">Detener alarma</button>
+  </main>
+
+  <script>
+    const TIME_ZONE = 'America/Mexico_City';
+
+    const clockEl = document.getElementById('clock');
+    const dateEl = document.getElementById('dateText');
+    const statusEl = document.getElementById('status');
+    const countdownEl = document.getElementById('countdown');
+
+    const hoursInput = document.getElementById('hoursInput');
+    const minutesInput = document.getElementById('minutesInput');
+    const secondsInput = document.getElementById('secondsInput');
+    const setAlarmBtn = document.getElementById('setAlarmBtn');
+    const stopAlarmBtn = document.getElementById('stopAlarmBtn');
+
+    let alarmTimeoutId = null;
+    let countdownIntervalId = null;
+    let beepIntervalId = null;
+    let alarmEndAt = null;
+    let ringing = false;
+    let audioCtx = null;
+
+    function pad(value) {
+      return String(value).padStart(2, '0');
+    }
+
+    function formatDateAndTimeCDMX(date) {
+      const time = date.toLocaleTimeString('es-MX', {
+        timeZone: TIME_ZONE,
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+
+      const dateText = date.toLocaleDateString('es-MX', {
+        timeZone: TIME_ZONE,
+        weekday: 'long',
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric'
+      });
+
+      return { time, dateText };
+    }
+
+    function updateClock() {
+      const now = new Date();
+      const formatted = formatDateAndTimeCDMX(now);
+      clockEl.textContent = formatted.time;
+      dateEl.textContent = formatted.dateText;
+    }
+
+    function playBeep() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.type = 'square';
+      oscillator.frequency.value = 880;
+      gainNode.gain.value = 0.08;
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.2);
+    }
+
+    function clearTimerReferences() {
+      if (alarmTimeoutId) {
+        clearTimeout(alarmTimeoutId);
+        alarmTimeoutId = null;
+      }
+      if (countdownIntervalId) {
+        clearInterval(countdownIntervalId);
+        countdownIntervalId = null;
+      }
+    }
+
+    function triggerAlarm() {
+      ringing = true;
+      alarmEndAt = null;
+      clearTimerReferences();
+      clockEl.classList.add('alarm');
+      statusEl.textContent = '⏰ ¡Alarma activada!';
+      countdownEl.textContent = 'Temporizador: 00:00:00';
+      playBeep();
+      beepIntervalId = setInterval(playBeep, 450);
+    }
+
+    function stopAlarm() {
+      ringing = false;
+      alarmEndAt = null;
+      clearTimerReferences();
+      clockEl.classList.remove('alarm');
+
+      if (beepIntervalId) {
+        clearInterval(beepIntervalId);
+        beepIntervalId = null;
+      }
+
+      statusEl.textContent = 'Sin alarma configurada.';
+      countdownEl.textContent = '';
+    }
+
+    function updateCountdown() {
+      if (!alarmEndAt) {
+        return;
+      }
+
+      const remainingMs = alarmEndAt - Date.now();
+      if (remainingMs <= 0) {
+        countdownEl.textContent = 'Temporizador: 00:00:00';
+        return;
+      }
+
+      const totalSeconds = Math.ceil(remainingMs / 1000);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+
+      countdownEl.textContent = `Temporizador: ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+    }
+
+    setAlarmBtn.addEventListener('click', () => {
+      const hours = Number(hoursInput.value || 0);
+      const minutes = Number(minutesInput.value || 0);
+      const seconds = Number(secondsInput.value || 0);
+
+      const valid = [hours, minutes, seconds].every((value) => Number.isInteger(value) && value >= 0);
+      const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+
+      if (!valid || totalSeconds <= 0) {
+        statusEl.textContent = 'Ingresa un temporizador válido (HH:MM:SS) mayor a 0.';
+        return;
+      }
+
+      stopAlarm();
+
+      alarmEndAt = Date.now() + totalSeconds * 1000;
+      alarmTimeoutId = setTimeout(triggerAlarm, totalSeconds * 1000);
+      countdownIntervalId = setInterval(updateCountdown, 250);
+      updateCountdown();
+
+      statusEl.textContent = `Alarma configurada en ${pad(hours)}:${pad(minutes)}:${pad(seconds)}.`;
+
+      hoursInput.value = '';
+      minutesInput.value = '';
+      secondsInput.value = '';
+    });
+
+    stopAlarmBtn.addEventListener('click', stopAlarm);
+
+    updateClock();
+    setInterval(updateClock, 1000);
+  </script>
+</body>
+</html>
